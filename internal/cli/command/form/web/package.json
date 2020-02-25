@@ -28,7 +28,7 @@
     "lodash": "4.17.15",
     "lodash-es": "4.17.15",
     "rxjs": "6.5.4",
-    "tslib": "1.9.3",
+    "tslib": "1.10.0",
     "zone.js": "~0.9.1"
   },
   "devDependencies": {
