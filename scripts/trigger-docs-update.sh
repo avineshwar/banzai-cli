@@ -5,13 +5,12 @@ set -euf
 PROJECT_SLUG='gh/banzaicloud/banzaicloud.github.io'
 RELEASE_TAG="$1"
 
-function main()
-{
-    curl \
-        -u "$CIRCLE_TOKEN:" \
-        -X POST \
-        --header "Content-Type: application/json" \
-        -d "{
+function main() {
+  curl \
+    -u "$CIRCLE_TOKEN:" \
+    -X POST \
+    --header "Content-Type: application/json" \
+    -d "{
             \"branch\": \"gh-pages\",
             \"parameters\": {
                 \"remote-trigger\": true,
