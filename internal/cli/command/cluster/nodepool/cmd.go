@@ -30,6 +30,7 @@ func NewNodePoolCommand(banzaiCli cli.Cli) *cobra.Command {
 
 	cmd.AddCommand(
 		NewCreateCommand(banzaiCli),
+		NewUpdateCommand(banzaiCli),
 		NewDeleteCommand(banzaiCli),
 	)
 

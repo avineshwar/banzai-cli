@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"sort"
 	"strings"
 
 	"emperror.dev/errors"
@@ -162,7 +163,6 @@ func getCreateSecretRequest(banzaiCli cli.Cli, options *createSecretOptions, out
 	if banzaiCli.Interactive() {
 		return buildInteractiveCreateSecretRequest(banzaiCli, options, out)
 	} else {
-
 		if values, err := importLocalCredential(banzaiCli, options); err != nil {
 			return err
 		} else if values != nil {
@@ -223,7 +223,6 @@ func validateCreateSecretRequest(val interface{}) error {
 }
 
 func buildInteractiveCreateSecretRequest(banzaiCli cli.Cli, options *createSecretOptions, out *pipeline.CreateSecretRequest) error {
-
 	if options.file != "" {
 		return readCreateSecretRequestFromFile(options.file, out)
 	}
@@ -288,7 +287,6 @@ func surveyGenericSecretType(out *pipeline.CreateSecretRequest) {
 	out.Values = make(map[string]interface{})
 
 	for {
-
 		// ask for key
 		var key string
 		_ = survey.AskOne(
@@ -321,7 +319,6 @@ func surveyGenericSecretType(out *pipeline.CreateSecretRequest) {
 		if !isContinue {
 			return
 		}
-
 	}
 }
 
@@ -353,6 +350,8 @@ func surveySecretType(options *createSecretOptions, secretTypes map[string]pipel
 			typeOptions = append(typeOptions, name)
 		}
 
+		sort.Strings(typeOptions)
+
 		selectTypePrompt := &survey.Select{
 			Message:  "Choose secret type:",
 			Options:  typeOptions,
@@ -367,7 +366,6 @@ func surveySecretFields(options *createSecretOptions, secretTypes map[string]pip
 	if options.secretType == TypeGeneric {
 		surveyGenericSecretType(out)
 	} else if secretType, ok := secretTypes[options.secretType]; ok {
-
 		// set fields
 		fields := secretType.Fields
 		questions := make([]secretFieldQuestion, len(fields))
@@ -409,7 +407,6 @@ func surveySecretFields(options *createSecretOptions, secretTypes map[string]pip
 
 // surveyTags starts to get tag(s) for the secret until `skip`
 func surveyTags(options *createSecretOptions) {
-
 	if options.tags == nil || len(options.tags) == 0 {
 		isTagAdd := false
 		prompt := &survey.Confirm{
@@ -438,7 +435,6 @@ func surveyTags(options *createSecretOptions) {
 			}
 		}
 	}
-
 }
 
 func getValidationFlag(validation string) optional.Bool {

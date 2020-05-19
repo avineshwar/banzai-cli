@@ -15,26 +15,20 @@
 package controlplane
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"os"
 
 	"emperror.dev/errors"
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/google/uuid"
-	"github.com/imdario/mergo"
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/cast"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v2"
 
 	"github.com/banzaicloud/banzai-cli/internal/cli"
 	"github.com/banzaicloud/banzai-cli/internal/cli/command/login"
-	"github.com/banzaicloud/banzai-cli/internal/cli/input"
 )
 
 const (
@@ -130,39 +124,17 @@ func runUp(options *createOptions, banzaiCli cli.Cli) error {
 		return errors.New("workspace is already initialized but a different --provider is specified")
 	}
 
-	if err := initStateBackend(options.cpContext, values); err != nil {
-		return err
-	}
-
-	source := "/export"
-
-	// for backward compatibility
-	hasExports, err := imageFileExists(options.cpContext, source)
+	_, env, err := getImageMetadata(options.cpContext, values, true)
 	if err != nil {
 		return err
 	}
 
-	if hasExports {
-		var defaultValues map[string]interface{}
-		exportHandlers := []ExportedFilesHandler{
-			defaultValuesExporter(filepath.Join(strings.TrimPrefix(source, "/"), "values.yaml"), &defaultValues),
-		}
-		if err := processExports(options.cpContext, source, exportHandlers); err != nil {
-			return err
-		}
-		if err := writeMergedValues(options.cpContext, defaultValues, values); err != nil {
-			return err
-		}
-	} else {
-		log.Warnf("%s is not available in the image, skipping export handlers", source)
-		// this is the legacy behaviour that should be removed as soon as we can deprecate old image versions
-		// where the null_resource.preapply_hook did the merging
-		if err := runTerraform("apply", options.cpContext, nil, "null_resource.preapply_hook"); err != nil {
-			return errors.WrapIf(err, "failed to run null_resource.preapply_hook as a standalone target")
+	if options.terraformInit {
+		if err := initStateBackend(options.cpContext, values, env); err != nil {
+			return errors.WrapIf(err, "failed to initialize state backend")
 		}
 	}
 
-	var env map[string]string
 	switch values["provider"] {
 	case providerPke:
 		err := ensurePKECluster(banzaiCli, options.cpContext)
@@ -177,11 +149,6 @@ func runUp(options *createOptions, banzaiCli cli.Cli) error {
 		}
 
 	case providerEc2:
-		_, creds, err := input.GetAmazonCredentials()
-		if err != nil {
-			return errors.WrapIf(err, "failed to get AWS credentials")
-		}
-
 		useGeneratedKey := true
 		if pc, ok := values["providerConfig"]; ok {
 			if pc, ok := pc.(map[string]interface{}); ok {
@@ -189,25 +156,12 @@ func runUp(options *createOptions, banzaiCli cli.Cli) error {
 			}
 		}
 
-		if err := ensureEC2Cluster(options.cpContext, creds, useGeneratedKey); err != nil {
+		if err := ensureEC2Cluster(options.cpContext, env, useGeneratedKey); err != nil {
 			return errors.WrapIf(err, "failed to create EC2 cluster")
 		}
-		env = creds
 
 	case providerCustom:
-		creds := map[string]string{}
-		if pc, ok := values["providerConfig"]; ok {
-			pc := cast.ToStringMap(pc)
-			if _, ok := pc["accessKey"]; ok {
-				_, awsCreds, err := input.GetAmazonCredentials()
-				if err != nil {
-					return errors.WrapIf(err, "failed to get AWS credentials")
-				}
-				creds = awsCreds
-			}
-		}
-
-		if err := ensureCustomCluster(options.cpContext, creds); err != nil {
+		if err := ensureCustomCluster(options.cpContext, env); err != nil {
 			return errors.WrapIf(err, "failed to create Custom infrastructure")
 		}
 
@@ -218,16 +172,6 @@ func runUp(options *createOptions, banzaiCli cli.Cli) error {
 	}
 
 	log.Info("Deploying Banzai Cloud Pipeline to Kubernetes cluster...")
-	if values["provider"] == providerCustom {
-		_, creds, err := input.GetAmazonCredentials()
-		if err != nil {
-			return errors.WrapIf(err, "failed to get AWS credentials")
-		}
-		env = map[string]string{}
-		for k, v := range creds {
-			env[k] = v
-		}
-	}
 
 	if err := runTerraform("apply", options.cpContext, env); err != nil {
 		return errors.WrapIf(err, "failed to deploy pipeline components")
@@ -291,70 +235,43 @@ func postInstall(options *createOptions, banzaiCli cli.Cli, values map[string]in
 	return nil
 }
 
-type ExportedFilesHandler func(map[string][]byte) error
+func initStateBackend(options *cpContext, values map[string]interface{}, env map[string]string) error {
+	var stateData []byte
 
-func processExports(options *cpContext, source string, exportedFilesHandlers []ExportedFilesHandler) error {
-	files, err := readFilesFromContainerToMemory(options, source)
-	if err != nil {
-		return errors.WrapIf(err, "failed to export files from the image")
-	}
-
-	for _, h := range exportedFilesHandlers {
-		if err := h(files); err != nil {
-			return errors.WrapIf(err, "failed to run handler on exported files")
+	if stateValues, ok := values["state"]; ok {
+		values := stringifyMap(stateValues)
+		var err error
+		stateData, err = json.MarshalIndent(values, "", "  ")
+		if err != nil {
+			return errors.WrapIf(err, "failed to marshal state backend configuration")
 		}
-	}
-	return nil
-}
-
-func writeMergedValues(options *cpContext, defaultValues, overrideValues map[string]interface{}) error {
-	var mergedValues map[string]interface{}
-	if err := mergeValues(&mergedValues, defaultValues, overrideValues); err != nil {
-		return err
-	}
-	bytes, err := yaml.Marshal(&mergedValues)
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal merged values")
-	}
-	if err := ioutil.WriteFile(filepath.Join(options.workspace, generatedValuesFileName), bytes, 0600); err != nil {
-		return errors.Wrap(err, "failed to write out generated values file")
-	}
-	return nil
-}
-
-func mergeValues(mergedValues *map[string]interface{}, defaultValues, overrideValues map[string]interface{}) error {
-	if err := mergo.Merge(mergedValues, &defaultValues, mergo.WithOverride); err != nil {
-		return errors.Wrap(err, "failed to process default values in the image")
-	}
-	if err := mergo.Merge(mergedValues, &overrideValues, mergo.WithOverride); err != nil {
-		return errors.Wrap(err, "failed to merge override values from the workspace on top of default values in the image")
-	}
-	return nil
-}
-
-func imageFileExists(options *cpContext, source string) (bool, error) {
-	errorMsg := &bytes.Buffer{}
-	cmdOpt := func(cmd *exec.Cmd) error {
-		cmd.Stderr = errorMsg
-		return nil
-	}
-	if err := runContainerCommandGeneric(options, []string{"ls", source}, nil, cmdOpt); err != nil {
-		if strings.Contains(errorMsg.String(), "No such file or directory") {
-			return false, nil
-		}
-		return false, err
+		options.explicitState = true
 	} else {
-		return true, nil
+		stateData = []byte(fmt.Sprintf(localStateBackend, tfstateFilename))
 	}
-}
 
-func defaultValuesExporter(source string, defaultValues *map[string]interface{}) ExportedFilesHandler {
-	return ExportedFilesHandler(func(files map[string][]byte) error {
-		if valuesFileContent, ok := files[source]; ok {
-			if err := yaml.Unmarshal(valuesFileContent, defaultValues); err != nil {
-				return errors.Wrap(err, "failed to unmarshal default values exported from the image")
-			}
-		}
-		return nil
-	})
+	err := ioutil.WriteFile(options.workspace+"/state.tf.json", stateData, 0600)
+	if err != nil {
+		return errors.WrapIf(err, "failed to create state backend configuration")
+	}
+
+	err = os.MkdirAll(options.workspace+"/.terraform", 0700)
+	if err != nil {
+		return errors.WrapIf(err, "failed to create state backend directory")
+	}
+
+	stateFile, err := os.Create(options.workspace + "/.terraform/terraform.tfstate")
+	if err != nil {
+		return errors.WrapIf(err, "failed to create state config file")
+	}
+	_ = stateFile.Close()
+
+	if err := runTerraform("init", options, env); err != nil {
+		return errors.WrapIf(err, "failed to init state backend")
+	}
+
+	// remove old state.tf if any
+	_ = os.Remove(options.workspace + "/state.tf")
+
+	return nil
 }

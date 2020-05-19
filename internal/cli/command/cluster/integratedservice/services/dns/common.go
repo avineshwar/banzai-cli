@@ -23,8 +23,6 @@ import (
 )
 
 const (
-	serviceName = "dns"
-
 	dnsRoute53     = "route53"
 	dnsAzure       = "azure"
 	dnsGoogle      = "google"
@@ -64,32 +62,6 @@ var (
 	}
 )
 
-type baseManager struct{}
-
-func (baseManager) GetName() string {
-	return serviceName
-}
-
-func NewDeactivateManager() *baseManager {
-	return &baseManager{}
-}
-
-func validateSpec(specObj map[string]interface{}) error {
-	var dnsSpec ServiceSpec
-
-	if err := mapstructure.Decode(specObj, &dnsSpec); err != nil {
-		return errors.WrapIf(err, "service specification does not conform to schema")
-	}
-
-	err := dnsSpec.ExternalDNS.Validate()
-
-	if dnsSpec.ClusterDomain == "" {
-		err = errors.Append(err, errors.New("cluster domain must not be empty"))
-	}
-
-	return err
-}
-
 const (
 	actionNew    = "newAction"
 	actionUpdate = "updateAction"
@@ -118,7 +90,6 @@ func (ac actionContext) IsUpdate() bool {
 // assembleServiceRequest assembles the request for activate and update the ExternalDNS integrated service
 // if the input rawSpec is nil -> activate flow, otherwise update flow
 func assembleServiceRequest(banzaiCli cli.Cli, clusterCtx clustercontext.Context, spec ServiceSpec, actionContext actionContext) (map[string]interface{}, error) {
-
 	// select the provider
 	selectedProviderInfo, err := selectProvider(*spec.ExternalDNS.Provider)
 	if err != nil {

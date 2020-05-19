@@ -16,7 +16,6 @@ import (
 	_ioutil "io/ioutil"
 	_nethttp "net/http"
 	_neturl "net/url"
-	"fmt"
 	"strings"
 )
 
@@ -47,7 +46,7 @@ func (a *OrganizationsApiService) GetOrg(ctx _context.Context, orgId int32) (Org
 
 	// create path and map variables
 	localVarPath := a.client.cfg.BasePath + "/api/v1/orgs/{orgId}"
-	localVarPath = strings.Replace(localVarPath, "{"+"orgId"+"}", _neturl.QueryEscape(fmt.Sprintf("%v", orgId)), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"orgId"+"}", _neturl.QueryEscape(parameterToString(orgId, "")) , -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := _neturl.Values{}
@@ -141,7 +140,6 @@ func (a *OrganizationsApiService) ListOrgs(ctx _context.Context) ([]Organization
 
 	// create path and map variables
 	localVarPath := a.client.cfg.BasePath + "/api/v1/orgs"
-
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := _neturl.Values{}
 	localVarFormParams := _neturl.Values{}
@@ -217,7 +215,7 @@ func (a *OrganizationsApiService) ListOrgs(ctx _context.Context) ([]Organization
 }
 
 /*
-SyncOrgs Synchronize Github organizations
+SyncOrgs Synchronize organizations
  * @param ctx _context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 */
 func (a *OrganizationsApiService) SyncOrgs(ctx _context.Context) (*_nethttp.Response, error) {
@@ -231,7 +229,6 @@ func (a *OrganizationsApiService) SyncOrgs(ctx _context.Context) (*_nethttp.Resp
 
 	// create path and map variables
 	localVarPath := a.client.cfg.BasePath + "/api/v1/orgs"
-
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := _neturl.Values{}
 	localVarFormParams := _neturl.Values{}

@@ -40,7 +40,6 @@ type clusterContext struct {
 const clusterIdKey = "cluster.id"
 
 func NewClusterContext(cmd *cobra.Command, banzaiCli cli.Cli, verb string) Context {
-
 	ctx := clusterContext{
 		banzaiCli: banzaiCli,
 	}
@@ -94,7 +93,7 @@ func (c *clusterContext) Init(args ...string) error {
 	}
 
 	if len(clusters) == 0 {
-		return errors.WrapIf(err, "there are no clusters in the organization")
+		return errors.New("there are no clusters in the organization")
 	}
 
 	if c.name == "" {

@@ -21,42 +21,22 @@ endif
 TEST_FORMAT = short-verbose
 endif
 
-PIPELINE_VERSION = 0.37.0
+PIPELINE_VERSION = 0.42.0
 CLOUDINFO_VERSION = 0.7.8
 TELESCOPES_VERSION = 0.5.2
 
 # Dependency versions
-GOTESTSUM_VERSION = 0.3.5
-GOLANGCI_VERSION = 1.18.0
+GOTESTSUM_VERSION = 0.4.1
+GOLANGCI_VERSION = 1.24.0
 LICENSEI_VERSION = 0.1.0
 GORELEASER_VERSION = 0.112.2
-PACKR_VERSION = 2.6.0
-OPENAPI_GENERATOR_VERSION = v4.2.2
+OPENAPI_GENERATOR_VERSION = v4.2.3
 
-GOLANG_VERSION = 1.12
+GOLANG_VERSION = 1.14
 
 # Add the ability to override some variables
 # Use with care
 -include override.mk
-
-bin/packr2: bin/packr2-${PACKR_VERSION}
-	@ln -sf packr2-${PACKR_VERSION} bin/packr2
-bin/packr2-${PACKR_VERSION}:
-	@mkdir -p bin
-	curl -L https://github.com/gobuffalo/packr/releases/download/v${PACKR_VERSION}/packr_${PACKR_VERSION}_${OS}_amd64.tar.gz | tar -zOxf - packr2 > ./bin/packr2-${PACKR_VERSION} && chmod +x ./bin/packr2-${PACKR_VERSION}
-
-.PHONY: client-build
-client-build: ## Build form client
-	@${MAKE} -C internal/cli/command/form/web build
-
-.PHONY: client-bundle
-client-bundle: bin/packr2 ## Bundle client assets
-	cd internal/cli/command/form && $(abspath bin/packr2)
-
-.PHONY: pre-build
-pre-build: ## Pre build bundles of static assets
-	@${MAKE} client-build
-	@${MAKE} client-bundle
 
 .PHONY: build
 build: ## Build a binary
@@ -78,7 +58,7 @@ debug: build-debug
 
 .PHONY: build-release
 build-release: LDFLAGS += -w
-build-release: pre-build build ## Build a binary without debug information
+build-release: build ## Build a binary without debug information
 
 .PHONY: generate-banzai-cli-docs
 generate-banzai-cli-docs: ## Generate documentation for Banzai CLI
@@ -114,6 +94,11 @@ bin/golangci-lint-${GOLANGCI_VERSION}:
 .PHONY: lint
 lint: bin/golangci-lint ## Run linter
 	bin/golangci-lint run
+
+.PHONY: fix
+fix: export CGO_ENABLED = 1
+fix: bin/golangci-lint ## Fix lint violations
+	bin/golangci-lint run --fix
 
 bin/licensei: bin/licensei-${LICENSEI_VERSION}
 	@ln -sf licensei-${LICENSEI_VERSION} bin/licensei
@@ -221,6 +206,10 @@ minor: ## Release a new minor version
 .PHONY: major
 major: ## Release a new major version
 	@${MAKE} release-$(shell (git describe --abbrev=0 --tags 2> /dev/null || echo "0.0.0") | sed 's/^v//' | awk -F'[ .]' '{print $$1+1".0.0"}')
+
+.PHONY: unstable
+unstable: bin/goreleaser # Publish an experimental release
+	bin/goreleaser release -f .goreleaser.unstable.yml ${GORELEASERFLAGS}
 
 .PHONY: list
 list: ## List all make targets

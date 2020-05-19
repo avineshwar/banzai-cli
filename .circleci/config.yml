@@ -8,7 +8,7 @@ jobs:
     build:
         docker:
             -
-                image: circleci/golang:1.12
+                image: circleci/golang:1.14
                 environment:
                     GOFLAGS: -mod=readonly
 
@@ -97,50 +97,24 @@ jobs:
                 store_artifacts:
                     path: build/
 
-    frontend-build:
-        docker:
-            -
-                image: circleci/node:11
-
-        steps:
-            - checkout
-
-            -
-                restore_cache:
-                    name: Restore dependencies
-                    keys:
-                        - npm-v1-{{ .Branch }}-{{ checksum "internal/cli/command/form/web/package-lock.json" }}
-                        - npm-v1-{{ .Branch }}
-                        - npm-v1-master
-                        - npm-v1
-
-            -
-                run:
-                    name: Build assets
-                    command: make client-build
-
-            -
-                save_cache:
-                    name: Save dependencies
-                    key: npm-v1-{{ .Branch }}-{{ checksum "internal/cli/command/form/web/package-lock.json" }}
-                    paths:
-                        - internal/cli/command/form/web/node_modules/
-
-            -
-                persist_to_workspace:
-                    root: .
-                    paths:
-                        - internal/cli/command/form/web/dist/
-
     release:
         docker:
             -
-                image: circleci/golang:1.12
+                image: circleci/golang:1.14
                 environment:
                     GOFLAGS: -mod=readonly
 
                     # Required for packr
                     GO111MODULE: "on"
+
+        parameters:
+            release-type:
+                default: "stable"
+                description: Type of release
+                type: enum
+                enum:
+                    - stable
+                    - unstable
 
         steps:
             - checkout
@@ -158,11 +132,6 @@ jobs:
                         - gomod-v1-master
                         - gomod-v1
 
-            -
-                run:
-                    name: Bundle assets
-                    command: make client-bundle
-
 
             -
                 run:
@@ -172,7 +141,15 @@ jobs:
             -
                 run:
                     name: Release
-                    command: make release
+                    command: |
+                      case "<<parameters.release-type>>" in
+                        stable)
+                          make release
+                          ;;
+                        unstable)
+                          make unstable
+                          ;;
+                      esac
 
     cdn-invalidate:
         executor: aws/default
@@ -189,6 +166,17 @@ jobs:
                        --distribution-id ${CDN_DISTRIBUTION_ID} \
                        --paths "/downloads/banzai-cli/*"
 
+    trigger-docs-update:
+        docker:
+            -
+                image: cimg/base:stable
+        steps:
+            - checkout
+            -
+                run:
+                   name: Trigger
+                   command: scripts/trigger-docs-update.sh "${CIRCLE_TAG}"
+
 workflows:
     version: 2
     ci:
@@ -197,28 +185,42 @@ workflows:
                 build:
                     filters:
                         tags:
-                            only: /^v?\d+\.\d+\.\d+(-\S*)?$/
-            -
-                frontend-build:
-                    filters:
-                        tags:
-                            only: /^v?\d+\.\d+\.\d+(-\S*)?$/
+                            only: /^\d+\.\d+\.\d+(-\S*)?$/
             -
                 release:
+                    name: Stable release
+                    release-type: stable
                     requires:
                         - build
-                        - frontend-build
                     filters:
                         tags:
-                            only: /^v?\d+\.\d+\.\d+(-\S*)?$/
+                            only: /^\d+\.\d+\.\d+$/
+                        branches:
+                            ignore: /.*/
+            -
+                release:
+                    name: Unstable release
+                    release-type: unstable
+                    requires:
+                        - build
+                    filters:
+                        tags:
+                            only: /^\d+\.\d+\.\d+-\S*$/
                         branches:
                             ignore: /.*/
             -
                 cdn-invalidate:
                     requires:
-                        - release
+                        - Stable release
                     filters:
                         tags:
-                            only: /^v?\d+\.\d+\.\d+(-\S*)?$/
+                            only: /^\d+\.\d+\.\d+$/
                         branches:
                             ignore: /.*/
+            -
+                trigger-docs-update:
+                    requires:
+                        - Stable release
+                    filters:
+                        tags:
+                            only: /^\d+\.\d+\.\d+$/

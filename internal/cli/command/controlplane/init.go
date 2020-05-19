@@ -16,7 +16,6 @@ package controlplane
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +28,6 @@ import (
 	"github.com/banzaicloud/banzai-cli/internal/cli/input"
 	"github.com/banzaicloud/banzai-cli/internal/cli/utils"
 	"github.com/google/uuid"
-	json "github.com/json-iterator/go"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
@@ -49,18 +47,21 @@ const (
 	"terraform": {
 		"backend": {
 			"local": {
-				"path": "/workspace/%s"
+				"path": "/workspace/%s",
+				"workspace_dir": "/workspace/"
 			}
 		}
 	}
 }`
+	exportPath   = "/export"
+	metadataFile = "export/metadata.yaml"
 )
 
 type ImageMetadata struct {
 	Custom struct {
-		CredentialType      *string `yaml:"credentialType,omitempty"`
-		Enabled             bool    `yaml:"enabled"`
-		GenerateClusterName bool    `yaml:"generateClusterName"`
+		CredentialType      string `yaml:"credentialType,omitempty"`
+		Enabled             bool   `yaml:"enabled"`
+		GenerateClusterName bool   `yaml:"generateClusterName"`
 	}
 }
 
@@ -149,17 +150,6 @@ func askProvider(k8sContext string) (string, error) {
 	}
 
 	return lookup[provider], nil
-}
-
-func askCredential() (string, error) {
-	choices := []string{"Use Amazon credentials", "Don't use provider credentials"}
-	lookup := []string{"aws", "none"}
-
-	var providerCreds int
-	if err := survey.AskOne(&survey.Select{Message: "Select provider:", Options: choices}, &providerCreds); err != nil {
-		return "", err
-	}
-	return lookup[providerCreds], nil
 }
 
 func runInit(options initOptions, banzaiCli cli.Cli) error {
@@ -278,17 +268,12 @@ func runInit(options initOptions, banzaiCli cli.Cli) error {
 			return err
 		}
 		providerConfig["region"] = region
-		providerConfig["accessKey"] = id
 		providerConfig["tags"] = map[string]string{
 			"banzaicloud-pipeline-controlplane-uuid": uuID,
 			"local-id":                               fmt.Sprintf("%s@%s/%s", os.Getenv("USER"), hostname, filepath.Base(options.workspace)),
 		}
 
-		var confirmed bool
-		_ = survey.AskOne(&survey.Confirm{Message: fmt.Sprintf("Do you want to use the following AWS access key: %s?", id)}, &confirmed)
-		if !confirmed {
-			return errors.New("cancelled")
-		}
+		log.Infof("The following AWS key will be used: %v", id)
 
 		if out[externalHost] == nil {
 			out[externalHost] = autoHost // address of ec2 instance
@@ -306,50 +291,35 @@ func runInit(options initOptions, banzaiCli cli.Cli) error {
 		out[externalHost] = guessExternalAddr()
 
 	case providerCustom:
-		out["providerConfig"] = providerConfig
-
-		source := "/export"
-
-		hasExports, err := imageFileExists(options.cpContext, source)
+		hasExports, err := imageFileExists(options.cpContext, exportPath)
 		if err != nil {
 			return err
 		}
 
+		if !hasExports {
+			return errors.New("The provided custom image has no metadata")
+		}
+
 		imageMeta := &ImageMetadata{}
-		if hasExports {
-			metadataFile := filepath.Join(strings.TrimPrefix(source, "/"), "metadata.yaml")
-			exportHandlers := []ExportedFilesHandler{
-				metadataExporter(metadataFile, imageMeta),
-			}
-			if err := processExports(options.cpContext, source, exportHandlers); err != nil {
-				return err
-			}
+		exportHandlers := []ExportedFilesHandler{
+			metadataExporter(metadataFile, imageMeta),
 		}
 
-		var providerCreds string
-		if imageMeta.Custom.CredentialType == nil {
-			providerCreds, err = askCredential()
-			if err != nil {
-				return err
-			}
-		} else {
-			providerCreds = *imageMeta.Custom.CredentialType
+		if err := processExports(options.cpContext, exportPath, exportHandlers); err != nil {
+			return err
 		}
 
-		if providerCreds == "aws" {
+		switch imageMeta.Custom.CredentialType {
+		case "aws":
 			id, region, err := getAmazonCredentialsRegion(defaultAwsRegion)
 			if err != nil {
 				return err
 			}
 			providerConfig["region"] = region
-			providerConfig["accessKey"] = id
 
-			var confirmed bool
-			_ = survey.AskOne(&survey.Confirm{Message: fmt.Sprintf("Do you want to use the following AWS access key: %s?", id)}, &confirmed)
-			if !confirmed {
-				return errors.New("cancelled")
-			}
+			log.Infof("The following AWS key will be used: %v", id)
 		}
+
 		out["ingressHostPort"] = false
 		providerConfig["tags"] = map[string]string{
 			"banzaicloud-pipeline-controlplane-uuid": uuID,
@@ -387,7 +357,10 @@ func runInit(options initOptions, banzaiCli cli.Cli) error {
 				return errors.New("Custom provisioning is available by specifying a custom installer image. Please refer to your deployment guide or use one of our support channels.")
 			}
 		}
+	}
 
+	if len(providerConfig) > 0 {
+		out["providerConfig"] = providerConfig
 	}
 
 	err = options.ensureImagePulled()
@@ -400,18 +373,11 @@ func runInit(options initOptions, banzaiCli cli.Cli) error {
 			return errors.WrapIf(err, "failed to determine installer image hash")
 		}
 		installer["image"] = strings.TrimSpace(string(ref))
-
 	} else {
 		installer["image"] = options.installerImage()
 	}
 
 	out["installer"] = installer
-
-	err = initStateBackend(options.cpContext, out)
-
-	if err != nil {
-		return err
-	}
 
 	return options.writeValues(out)
 }
@@ -444,46 +410,6 @@ func initImageValues(options initOptions, out map[string]interface{}) (image str
 		}
 	}
 	return image, tag
-}
-
-func initStateBackend(options *cpContext, values map[string]interface{}) error {
-
-	var stateData []byte
-
-	if stateValues, ok := values["state"]; ok {
-		var err error
-		stateData, err = json.MarshalIndent(stateValues, "", "  ")
-		if err != nil {
-			return errors.WrapIf(err, "failed to marshal state backend configuration")
-		}
-	} else {
-		stateData = []byte(fmt.Sprintf(localStateBackend, tfstateFilename))
-	}
-
-	err := ioutil.WriteFile(options.workspace+"/state.tf.json", stateData, 0600)
-	if err != nil {
-		return errors.WrapIf(err, "failed to create state backend configuration")
-	}
-
-	err = os.MkdirAll(options.workspace+"/.terraform", 0700)
-	if err != nil {
-		return errors.WrapIf(err, "failed to create state backend directory")
-	}
-
-	stateFile, err := os.Create(options.workspace + "/.terraform/terraform.tfstate")
-	if err != nil {
-		return errors.WrapIf(err, "failed to create state config file")
-	}
-	_ = stateFile.Close()
-
-	if err := runTerraform("init", options, nil); err != nil {
-		return errors.WrapIf(err, "failed to init state backend")
-	}
-
-	// remove old state.tf if any
-	_ = os.Remove(options.workspace + "/state.tf")
-
-	return nil
 }
 
 func getAmazonCredentialsRegion(defaultAwsRegion string) (string, string, error) {
