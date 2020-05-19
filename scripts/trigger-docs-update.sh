@@ -8,7 +8,7 @@ RELEASE_TAG="$1"
 function main()
 {
     curl \
-        -u "${CIRCLE_TOKEN}:" \
+        -u "$CIRCLE_TOKEN:" \
         -X POST \
         --header "Content-Type: application/json" \
         -d "{
@@ -16,10 +16,10 @@ function main()
             \"parameters\": {
                 \"remote-trigger\": true,
                 \"cli\": \"banzai-cli\",
-                \"cli-release-tag\": \"${RELEASE_TAG}\",
+                \"cli-release-tag\": \"$RELEASE_TAG\",
                 \"cli-base-path\": \"/docs/pipeline/cli/reference/\"
             }
-        }" "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline"
+        }" "https://circleci.com/api/v2/project/$PROJECT_SLUG/pipeline"
 }
 
 main "$@"
