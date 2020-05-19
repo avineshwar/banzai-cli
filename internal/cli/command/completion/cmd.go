@@ -32,7 +32,7 @@ func NewCompletionCommand(banzaiCli cli.Cli) *cobra.Command {
 			Use:   "bash",
 			Short: "Generates bash completion scripts",
 			Long: `To load completion run
-			
+
 			. <(banzai completion bash)
 			`,
 			Run: func(c *cobra.Command, args []string) {
@@ -43,7 +43,7 @@ func NewCompletionCommand(banzaiCli cli.Cli) *cobra.Command {
 			Use:   "zsh",
 			Short: "Generates zsh completion scripts",
 			Long: `To load completion run
-				
+
 				. <(banzai completion zsh)
 				`,
 			Run: func(c *cobra.Command, args []string) {
